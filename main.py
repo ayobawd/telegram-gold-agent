@@ -1,4 +1,5 @@
 import os, json, requests
+from typing import Optional
 from fastapi import FastAPI, Request, HTTPException
 
 app = FastAPI()
@@ -7,6 +8,7 @@ BOT_TOKEN = os.getenv("BOT_TOKEN")
 DEFAULT_CHAT_ID = os.getenv("CHAT_ID")  # optional default
 
 if not BOT_TOKEN:
+    # Fail fast so bad deployments are obvious in logs
     raise RuntimeError("BOT_TOKEN env var is required")
 
 TELEGRAM_URL = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
@@ -18,14 +20,14 @@ def extract_text(data: dict) -> str:
         if isinstance(v, str) and v.strip():
             return v.strip()
 
-    # Messages list
+    # messages: ["a","b",...]
     msgs = data.get("messages")
     if isinstance(msgs, list) and msgs:
         parts = [str(m).strip() for m in msgs if str(m).strip()]
         if parts:
             return "\n".join(parts)
 
-    # OnDemand style outputs
+    # OnDemand style: outputs: [{type, value}, ...]
     outs = data.get("outputs")
     if isinstance(outs, list) and outs:
         parts = []
@@ -39,13 +41,13 @@ def extract_text(data: dict) -> str:
     # Fallback: pretty JSON
     return json.dumps(data, ensure_ascii=False, indent=2)
 
-def send_telegram(text: str, chat_id: str, parse_mode: str | None = None):
+def send_telegram(text: str, chat_id: str, parse_mode: Optional[str] = None):
     if not chat_id:
         raise HTTPException(status_code=400, detail="Missing chat_id (no CHAT_ID env and no chat_id in payload).")
 
-    # Telegram message length guard (~4096); use a safe chunk size
+    # Telegram limit is ~4096 chars; send in safe chunks
     MAX = 4000
-    for i in range(0, len(text) or 1, MAX):
+    for i in range(0, max(len(text), 1), MAX):
         payload = {
             "chat_id": chat_id,
             "text": text[i:i+MAX] if text else "(empty message)",
