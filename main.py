@@ -311,6 +311,48 @@ def auto_format_if_plain(text: str, rid: str) -> (str, Optional[str]):
         return html, "HTML"
     return text, None
 
+# ---------------- news time sanitizer ----------------
+# removes times from news lines only (keeps header time, each instrument's "السعر الآن" time, and the footer source time)
+AR_DIGIT = r"[\u0660-\u0669]"
+TZ_OPT = r"(?:\s?(?:GST|UTC|GMT|[A-Z]{2,4}))?"
+EN_TIME = r"(?:[01]?\d|2[0-3]):[0-5]\d(?::[0-5]\d)?"
+AR_TIME = rf"(?:{AR_DIGIT}{{1,2}}:{AR_DIGIT}{{2}}(?::{AR_DIGIT}{{2}})?)"
+
+_BRACKET_EN = re.compile(rf"\[(اليوم|آخر\s*7\s*أيام|مقرر)[^\]]*?{EN_TIME}{TZ_OPT}\]", re.IGNORECASE)
+_BRACKET_AR = re.compile(rf"\[(اليوم|آخر\s*7\s*أيام|مقرر)[^\]]*?{AR_TIME}{TZ_OPT}\]", re.IGNORECASE)
+_FREE_TIME = re.compile(rf"(?:\s*[؛,،\-—:]\s*)?(?:{EN_TIME}|{AR_TIME}){TZ_OPT}", re.IGNORECASE)
+
+def _normalize_tags(s: str) -> str:
+    s = re.sub(r"\s*\[\s*اليوم\s*؛?\s*\]", " [اليوم]", s)
+    s = re.sub(r"\s*\[\s*آخر\s*7\s*أيام\s*؛?\s*\]", " [آخر 7 أيام]", s)
+    s = re.sub(r"\s*\[\s*مقرر\s*؛?\s*\]", " [مقرر]", s)
+    s = re.sub(r"\s{2,}", " ", s)
+    s = re.sub(r"\s*—\s*\]", "]", s)
+    return s.rstrip()
+
+def _is_news_line(line: str) -> bool:
+    if line.startswith("📊"):
+        return True
+    if line.startswith("• ") and not line.startswith("• السعر الآن"):
+        if line.strip().startswith("المصدر السعري:"):
+            return False
+        return True
+    return False
+
+def strip_time_from_news(text: str) -> str:
+    lines = text.splitlines()
+    out = []
+    for ln in lines:
+        if _is_news_line(ln):
+            s = _BRACKET_EN.sub(r"[\1]", ln)
+            s = _BRACKET_AR.sub(r"[\1]", s)
+            s = _FREE_TIME.sub("", s)
+            s = _normalize_tags(s)
+            out.append(s)
+        else:
+            out.append(ln)
+    return "\n".join(out)
+
 # ---------------- sending ----------------
 
 def send_telegram(text: str, chat_id_ref: Optional[str], rid: str, parse_mode: Optional[str] = None) -> None:
@@ -447,6 +489,9 @@ async def handle(request: Request):
         if auto_pm and not parse_mode:
             parse_mode = auto_pm
         text = formatted_text
+
+        # 🔽 sanitize news lines to remove any times
+        text = strip_time_from_news(text)
 
         # If no chat_id provided:
         if not chat_id_ref:
