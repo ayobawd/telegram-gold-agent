@@ -11,6 +11,7 @@ WORKDIR /app
 # Expose port (default 3000), OnDemand uses PORT environment variable
 ENV PORT=3000
 
-# Start the FastAPI server (shell form expands ${PORT})
+# Start the FastAPI server (shell-form expands ${PORT})
 CMD ["sh", "-c", "uvicorn main:app --host 0.0.0.0 --port ${PORT:-3000} --proxy-headers"]
+
 
