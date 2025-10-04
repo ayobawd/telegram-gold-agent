@@ -32,9 +32,10 @@ def extract_text(data: dict) -> str:
     if isinstance(outs, list) and outs:
         parts = []
         for o in outs:
-            v = o.get("value")
-            if isinstance(v, str) and v.strip():
-                parts.append(v.strip())
+            if isinstance(o, dict):
+                v = o.get("value")
+                if isinstance(v, str) and v.strip():
+                    parts.append(v.strip())
         if parts:
             return "\n\n".join(parts)
 
@@ -47,16 +48,21 @@ def send_telegram(text: str, chat_id: str, parse_mode: Optional[str] = None):
 
     # Telegram limit is ~4096 chars; send in safe chunks
     MAX = 4000
-    for i in range(0, max(len(text), 1), MAX):
+    safe_text = text or "(empty message)"
+    for i in range(0, len(safe_text), MAX):
         payload = {
             "chat_id": chat_id,
-            "text": text[i:i+MAX] if text else "(empty message)",
+            "text": safe_text[i:i+MAX],
             "disable_web_page_preview": True,
         }
         if parse_mode in ("Markdown", "MarkdownV2", "HTML"):
             payload["parse_mode"] = parse_mode
 
-        r = requests.post(TELEGRAM_URL, json=payload, timeout=15)
+        try:
+            r = requests.post(TELEGRAM_URL, json=payload, timeout=15)
+        except requests.RequestException as e:
+            raise HTTPException(status_code=502, detail=f"Telegram request error: {e}")
+
         if not r.ok:
             raise HTTPException(status_code=502, detail=f"Telegram HTTP error: {r.status_code} {r.text}")
         try:
@@ -85,4 +91,4 @@ async def handle(request: Request):
     parse_mode = data.get("parse_mode")  # optional: "MarkdownV2", "HTML", etc.
 
     send_telegram(text, chat_id, parse_mode=parse_mode)
-    return {"status": "sent", "to": chat_id or "(none)", "length": len(text)}
+    return {"status": "sent", "to": chat_id or "(none)", "length": len(text or "")}
