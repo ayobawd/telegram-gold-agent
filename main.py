@@ -14,6 +14,7 @@ print(f"[boot] Python: {sys.version}", flush=True)
 # --- Config ---
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 DEFAULT_CHAT_ID = (os.getenv("CHAT_ID") or "").strip()
+SECOND_DEFAULT_CHAT_ID = (os.getenv("CHAT_IDD") or "").strip()  # NEW
 DEFAULT_PARSE_MODE = (os.getenv("DEFAULT_PARSE_MODE") or "").strip()  # e.g., "HTML" or "MarkdownV2"
 STRICT_CHAT_ID = os.getenv("STRICT_CHAT_ID", "0") in ("1", "true", "True")
 AUTO_FORMAT_RAW = os.getenv("AUTO_FORMAT_RAW", "0") in ("1", "true", "True")
@@ -26,6 +27,7 @@ TELEGRAM_BASE = f"https://api.telegram.org/bot{BOT_TOKEN}" if BOT_TOKEN else Non
 
 print(f"[boot] BOT_TOKEN set: {bool(BOT_TOKEN)}", flush=True)
 print(f"[boot] CHAT_ID present: {bool(DEFAULT_CHAT_ID)} value='{DEFAULT_CHAT_ID}'", flush=True)
+print(f"[boot] CHAT_IDD present: {bool(SECOND_DEFAULT_CHAT_ID)} value='{SECOND_DEFAULT_CHAT_ID}'", flush=True)  # NEW
 print(f"[boot] DEFAULT_PARSE_MODE: '{DEFAULT_PARSE_MODE}'", flush=True)
 print(f"[boot] STRICT_CHAT_ID: {STRICT_CHAT_ID}", flush=True)
 print(f"[boot] AUTO_FORMAT_RAW: {AUTO_FORMAT_RAW}", flush=True)
@@ -312,7 +314,6 @@ def auto_format_if_plain(text: str, rid: str) -> (str, Optional[str]):
     return text, None
 
 # ---------------- news time sanitizer ----------------
-# removes times from news lines only (keeps header time, each instrument's "السعر الآن" time, and the footer source time)
 AR_DIGIT = r"[\u0660-\u0669]"
 TZ_OPT = r"(?:\s?(?:GST|UTC|GMT|[A-Z]{2,4}))?"
 EN_TIME = r"(?:[01]?\d|2[0-3]):[0-5]\d(?::[0-5]\d)?"
@@ -398,6 +399,8 @@ def health(probe: Optional[int] = 0):
         "python": sys.version,
         "has_default_chat": bool(DEFAULT_CHAT_ID),
         "default_chat_id": DEFAULT_CHAT_ID if DEFAULT_CHAT_ID else None,
+        "has_second_default_chat": bool(SECOND_DEFAULT_CHAT_ID),     # NEW
+        "second_default_chat_id": SECOND_DEFAULT_CHAT_ID or None,    # NEW
         "strict_chat_id": STRICT_CHAT_ID,
         "default_parse_mode": DEFAULT_PARSE_MODE or None,
         "auto_format_raw": AUTO_FORMAT_RAW,
@@ -493,7 +496,7 @@ async def handle(request: Request):
         # 🔽 sanitize news lines to remove any times
         text = strip_time_from_news(text)
 
-        # If no chat_id provided:
+        # If no chat_id provided ➜ send to both defaults if available
         if not chat_id_ref:
             if BROADCAST_DEFAULT and registry.list_ids():
                 targets = registry.list_ids()
@@ -501,11 +504,24 @@ async def handle(request: Request):
                 results = send_to_many(text, targets, rid, parse_mode=parse_mode)
                 dt = _now_ms() - t0
                 return JSONResponse({"ok": True, "status": "broadcast", "results": results, "rid": rid, "duration_ms": dt})
-            elif DEFAULT_CHAT_ID:
-                chat_id_ref = DEFAULT_CHAT_ID
-            else:
-                raise HTTPException(status_code=400, detail="No chat_id provided, no default CHAT_ID, and no saved chats to broadcast.")
 
+            # Always attempt to send to both defaults if present
+            targets: List[str] = []
+            if DEFAULT_CHAT_ID:
+                targets.append(DEFAULT_CHAT_ID)
+            if SECOND_DEFAULT_CHAT_ID:
+                targets.append(SECOND_DEFAULT_CHAT_ID)
+
+            if targets:
+                print(f"[{rid}][dual-default] -> {targets}", flush=True)
+                results = send_to_many(text, targets, rid, parse_mode=parse_mode)
+                dt = _now_ms() - t0
+                return JSONResponse({"ok": True, "status": "sent_to_defaults", "results": results, "rid": rid, "duration_ms": dt})
+
+            # No defaults and no registry
+            raise HTTPException(status_code=400, detail="No chat_id provided, no default CHAT_ID/CHAT_IDD, and no saved chats to broadcast.")
+
+        # If chat_id was provided in payload ➜ send only there (explicit override)
         print(f"[{rid}][resolved] chat_ref={'<payload>' if data.get('chat_id') else '<default>'} parse_mode={parse_mode!r} text_len={len(text or '')}", flush=True)
         send_telegram(text, chat_id_ref, rid, parse_mode=parse_mode)
 
